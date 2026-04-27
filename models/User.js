@@ -32,6 +32,8 @@ const userSchema = new mongoose.Schema(
       publicId: String,
     },
     wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
+    // Marketing email preferences
+    marketingEmails: { type: Boolean, default: true },
     // password reset
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpires: { type: Date, select: false },

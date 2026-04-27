@@ -268,9 +268,102 @@ function welcome({ name }) {
   return { subject: `Welcome to ${BRAND}`, html, text };
 }
 
+function cartRecovery({ name, cart, user }) {
+  const items = cart.items || [];
+  const subtotal = items.reduce(
+    (s, i) => s + (Number(i.price) || 0) * (Number(i.qty) || 0),
+    0
+  );
+
+  const rows = items
+    .map(
+      (it) => `
+    <tr>
+      <td style="padding:12px 0;border-bottom:1px solid ${
+        colors.line
+      };vertical-align:top;width:64px;">
+        ${
+          it.image
+            ? `<img src="${it.image}" alt="" width="56" style="display:block;border:1px solid ${colors.line};" />`
+            : ""
+        }
+      </td>
+      <td style="padding:12px 12px;border-bottom:1px solid ${
+        colors.line
+      };vertical-align:top;">
+        <div>${it.name || "Item"}</div>
+        ${
+          it.color || it.size
+            ? `<div style="color:${
+                colors.muted
+              };font-size:12px;margin-top:2px;">${[it.color, it.size]
+                .filter(Boolean)
+                .join(" · ")}</div>`
+            : ""
+        }
+      </td>
+      <td align="right" style="padding:12px 0;border-bottom:1px solid ${
+        colors.line
+      };vertical-align:top;">× ${it.qty}</td>
+      <td align="right" style="padding:12px 0;border-bottom:1px solid ${
+        colors.line
+      };vertical-align:top;">${formatINR((it.price || 0) * (it.qty || 0))}</td>
+    </tr>
+  `
+    )
+    .join("");
+
+  const cartUrl = `${SITE}/cart`;
+  const unsubscribeUrl = `${SITE}/account?tab=settings&unsubscribe=1`;
+
+  const html = wrap(`
+    <h1 style="font-family:Georgia,serif;font-weight:normal;font-size:26px;margin:0 0 12px;">
+      You left something behind, ${name?.split(" ")[0] || "friend"}.
+    </h1>
+    <p style="color:${colors.muted};margin-top:0;">
+      Your bag is still here. Pick up where you left off — sizes go fast.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;font-size:14px;">${rows}</table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;color:${
+      colors.muted
+    };">
+      <tr>
+        <td style="color:${colors.ink};font-weight:600;">Subtotal</td>
+        <td align="right" style="color:${
+          colors.ink
+        };font-weight:600;">${formatINR(subtotal)}</td>
+      </tr>
+    </table>
+    <p style="margin-top:32px;">${btn(cartUrl, "Return to bag")}</p>
+    <p style="color:${colors.muted};font-size:12px;margin-top:24px;">
+      Sizes and stock change quickly. If something is no longer available we'll let you know at checkout.
+    </p>
+    <p style="color:${
+      colors.muted
+    };font-size:11px;margin-top:32px;padding-top:16px;border-top:1px solid ${
+    colors.line
+  };">
+      Don't want these reminders? <a href="${unsubscribeUrl}" style="color:${
+    colors.muted
+  };">Unsubscribe</a>.
+    </p>`);
+
+  const itemSummary = items.map((i) => `${i.name} × ${i.qty}`).join(", ");
+  const text = `Hi ${
+    name || "there"
+  }, you left ${itemSummary} in your bag. Pick up where you left off: ${cartUrl}`;
+
+  return {
+    subject: `You left something behind`,
+    html,
+    text,
+  };
+}
+
 module.exports = {
   passwordReset,
   orderConfirmation,
   orderStatusUpdate,
   welcome,
+  cartRecovery,
 };

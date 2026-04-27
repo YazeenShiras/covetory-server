@@ -12,6 +12,7 @@ const userRoutes = require("./routes/users");
 const uploadRoutes = require("./routes/upload");
 const paymentRoutes = require("./routes/payment");
 const couponRoutes = require("./routes/coupons");
+const cartRoutes = require("./routes/cart");
 const analyticsRoutes = require("./routes/analytics");
 const returnRoutes = require("./routes/returns");
 const { router: reviewRoutes, productReviews } = require("./routes/reviews");
@@ -42,6 +43,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/coupons", couponRoutes);
+app.use("/api/cart", cartRoutes);
 app.use("/api/returns", returnRoutes);
 app.use("/api", analyticsRoutes); // exposes /api/events + /api/analytics/*
 app.use("/api/reviews", reviewRoutes);
@@ -53,13 +55,69 @@ app.use((req, res) => res.status(404).json({ message: "Not found" }));
 // Error handler
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
-  const status = err.status || 500;
-  console.error("[error]", err);
+  // Honour res.status() set by the controller — common pattern with express-async-handler.
+  // Fall back to err.status (some libs set this), then 500.
+  let status = err.status;
+  if (!status && res.statusCode && res.statusCode >= 400)
+    status = res.statusCode;
+  if (!status) status = 500;
+
+  // Don't log expected client errors as scary stack traces
+  if (status >= 500) console.error("[error]", err);
+  else console.warn("[client error]", status, err.message);
+
   res.status(status).json({
     message: err.message || "Server error",
-    ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
+    ...(process.env.NODE_ENV !== "production" &&
+      status >= 500 && { stack: err.stack }),
   });
 });
+
+// ===== Cart recovery worker =====
+const { processAbandonedCarts } = require("./utils/cartRecovery");
+const { protect, admin } = require("./middleware/auth");
+
+// HTTP trigger — for external schedulers (cron-job.org, EasyCron) or admin "run now"
+// Auth: header `x-recovery-token` matching CART_RECOVERY_TOKEN env var, OR admin user.
+app.post("/api/admin/cart-recovery/run", async (req, res, next) => {
+  try {
+    const token = req.headers["x-recovery-token"];
+    const sharedToken = process.env.CART_RECOVERY_TOKEN;
+    const tokenOk = sharedToken && token === sharedToken;
+    if (!tokenOk) {
+      return protect(req, res, () =>
+        admin(req, res, async () => {
+          const result = await processAbandonedCarts();
+          res.json(result);
+        })
+      );
+    }
+    const result = await processAbandonedCarts();
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// In-process scheduler — runs every hour. Skip if disabled via env.
+const RECOVERY_INTERVAL_MS =
+  Number(process.env.CART_RECOVERY_INTERVAL_MIN || 60) * 60 * 1000;
+const RECOVERY_DISABLED = process.env.CART_RECOVERY_DISABLED === "true";
+if (!RECOVERY_DISABLED && RECOVERY_INTERVAL_MS > 0) {
+  setInterval(async () => {
+    try {
+      const result = await processAbandonedCarts();
+      if (result.scanned > 0) {
+        console.log("[cart-recovery]", result);
+      }
+    } catch (err) {
+      console.error("[cart-recovery] tick failed:", err?.message);
+    }
+  }, RECOVERY_INTERVAL_MS);
+  console.log(
+    `[cart-recovery] scheduled every ${RECOVERY_INTERVAL_MS / 60000} minutes`
+  );
+}
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`API running on :${PORT}`));

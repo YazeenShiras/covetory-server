@@ -1,4 +1,5 @@
 const asyncHandler = require("express-async-handler");
+const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const User = require("../models/User");
@@ -393,6 +394,94 @@ const downloadInvoice = asyncHandler(async (req, res) => {
   await renderInvoice(order, res);
 });
 
+// POST /api/orders/bulk  (admin)
+// body: { ids: [string], action, payload? }
+// actions:
+//   'set_status'  — payload.status: 'processing' | 'shipped' | 'delivered' | 'cancelled'
+//   'mark_paid'   — flips isPaid: true, sets paidAt if not already paid
+const bulkOrderAction = asyncHandler(async (req, res) => {
+  const { ids, action, payload = {} } = req.body || {};
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    res.status(400);
+    throw new Error("ids must be a non-empty array");
+  }
+  if (ids.length > 200) {
+    res.status(400);
+    throw new Error("Bulk operations are limited to 200 items at a time");
+  }
+  const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (validIds.length === 0) {
+    res.status(400);
+    throw new Error("No valid order IDs");
+  }
+
+  // We process orders one-by-one so each gets a status-history entry and
+  // each customer gets exactly one email per status change. Slower than
+  // updateMany() but the audit trail matters more than throughput here.
+  const orders = await Order.find({ _id: { $in: validIds } }).populate(
+    "user",
+    "name email"
+  );
+  let modified = 0;
+
+  switch (action) {
+    case "set_status": {
+      const status = payload.status;
+      const allowed = ["processing", "shipped", "delivered", "cancelled"];
+      if (!allowed.includes(status)) {
+        res.status(400);
+        throw new Error(`payload.status must be one of: ${allowed.join(", ")}`);
+      }
+      for (const order of orders) {
+        if (order.status === status) continue;
+        const prev = order.status;
+        order.status = status;
+        order.statusHistory = [
+          ...(order.statusHistory || []),
+          { status, at: new Date() },
+        ];
+        await order.save();
+
+        // Notify customer
+        const recipient = order.user?.email || order.guestEmail;
+        const displayName = order.user?.name || order.guestName || "there";
+        if (recipient && status !== prev) {
+          sendEmail({
+            to: recipient,
+            ...templates.orderStatusUpdate({
+              name: displayName,
+              order,
+              newStatus: status,
+              trackingNumber: order.trackingNumber,
+              trackingUrl: order.trackingUrl,
+            }),
+          });
+        }
+        modified++;
+      }
+      break;
+    }
+
+    case "mark_paid": {
+      for (const order of orders) {
+        if (order.isPaid) continue;
+        order.isPaid = true;
+        order.paidAt = new Date();
+        await order.save();
+        modified++;
+      }
+      break;
+    }
+
+    default:
+      res.status(400);
+      throw new Error(`Unknown action: ${action}`);
+  }
+
+  res.json({ ok: true, action, modified, scanned: orders.length });
+});
+
 module.exports = {
   createOrder,
   getMyOrders,
@@ -401,4 +490,5 @@ module.exports = {
   updateOrderStatus,
   lookupOrder,
   downloadInvoice,
+  bulkOrderAction,
 };

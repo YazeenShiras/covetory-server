@@ -9,6 +9,7 @@ const {
   suggestProducts,
   relatedProducts,
   frequentlyBought,
+  bulkAction,
 } = require("../controllers/productController");
 const { protect, admin } = require("../middleware/auth");
 
@@ -18,6 +19,7 @@ router.get("/search/suggest", suggestProducts);
 router.get("/:id/related", relatedProducts);
 router.get("/:id/frequently-bought", frequentlyBought);
 router.get("/:id", getProduct);
+router.post("/bulk", protect, admin, bulkAction);
 router.post("/", protect, admin, createProduct);
 router.put("/:id", protect, admin, updateProduct);
 router.delete("/:id", protect, admin, deleteProduct);

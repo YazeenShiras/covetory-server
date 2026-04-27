@@ -147,6 +147,126 @@ const deleteProduct = asyncHandler(async (req, res) => {
   res.json({ message: "Product deleted" });
 });
 
+// POST /api/products/bulk  (admin)
+// body: { ids: [string], action, payload? }
+// actions:
+//   'delete'        — remove products + cloudinary assets
+//   'feature_on'    — set featured: true
+//   'feature_off'   — set featured: false
+//   'set_price'     — payload.value (rupees); applies as flat price to all
+//   'discount'      — payload.percent (0-95); reduces price by % rounded to nearest 50
+const bulkAction = asyncHandler(async (req, res) => {
+  const mongoose = require("mongoose");
+  const { ids, action, payload = {} } = req.body || {};
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    res.status(400);
+    throw new Error("ids must be a non-empty array");
+  }
+  if (ids.length > 200) {
+    res.status(400);
+    throw new Error("Bulk operations are limited to 200 items at a time");
+  }
+  // Reject invalid ObjectIds early so a typo can't crash the whole batch
+  const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (validIds.length === 0) {
+    res.status(400);
+    throw new Error("No valid product IDs");
+  }
+
+  let result;
+  switch (action) {
+    case "delete": {
+      const products = await Product.find({ _id: { $in: validIds } });
+      const allImages = products.flatMap((p) => [
+        ...(p.images || []),
+        ...(p.colors || []).flatMap((c) => c.images || []),
+      ]);
+      // Cloudinary cleanup is best-effort
+      for (const img of allImages) {
+        if (img.publicId) {
+          try {
+            await cloudinary.uploader.destroy(img.publicId);
+          } catch (_) {}
+        }
+      }
+      const r = await Product.deleteMany({ _id: { $in: validIds } });
+      result = { deleted: r.deletedCount };
+      break;
+    }
+
+    case "feature_on":
+    case "feature_off": {
+      const r = await Product.updateMany(
+        { _id: { $in: validIds } },
+        { $set: { featured: action === "feature_on" } }
+      );
+      result = { matched: r.matchedCount, modified: r.modifiedCount };
+      break;
+    }
+
+    case "set_price": {
+      const value = Number(payload.value);
+      if (!isFinite(value) || value < 0) {
+        res.status(400);
+        throw new Error("payload.value must be a positive number");
+      }
+      const r = await Product.updateMany(
+        { _id: { $in: validIds } },
+        { $set: { price: +value.toFixed(2) } }
+      );
+      result = { matched: r.matchedCount, modified: r.modifiedCount };
+      break;
+    }
+
+    case "discount": {
+      const percent = Number(payload.percent);
+      if (!isFinite(percent) || percent <= 0 || percent >= 100) {
+        res.status(400);
+        throw new Error("payload.percent must be between 0 and 100");
+      }
+      // Discount per-product so each maintains its own price relationship.
+      const products = await Product.find({ _id: { $in: validIds } });
+      let modified = 0;
+      for (const p of products) {
+        const original = p.compareAtPrice || p.price;
+        const discounted =
+          Math.round((original * (1 - percent / 100)) / 50) * 50; // round to ₹50
+        // Save original as compareAtPrice so the storefront shows strike-through
+        if (!p.compareAtPrice) p.compareAtPrice = p.price;
+        p.price = Math.max(50, discounted);
+        await p.save();
+        modified++;
+      }
+      result = { modified };
+      break;
+    }
+
+    case "remove_discount": {
+      // Restore price to compareAtPrice and clear it
+      const products = await Product.find({
+        _id: { $in: validIds },
+        compareAtPrice: { $gt: 0 },
+      });
+      let modified = 0;
+      for (const p of products) {
+        p.price = p.compareAtPrice;
+        p.compareAtPrice = undefined;
+        await p.save();
+        modified++;
+      }
+      result = { modified };
+      break;
+    }
+
+    default:
+      res.status(400);
+      throw new Error(`Unknown action: ${action}`);
+  }
+
+  res.json({ ok: true, action, ...result });
+});
+
 // GET /api/products/:id/related
 // Returns up to 8 products in the same category, excluding current.
 // Falls back to other featured products if the category is thin.
@@ -263,4 +383,5 @@ module.exports = {
   suggestProducts,
   relatedProducts,
   frequentlyBought,
+  bulkAction,
 };

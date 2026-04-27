@@ -11,6 +11,7 @@ const publicUser = (u) => ({
   avatar: u.avatar,
   wishlist: u.wishlist,
   isAdmin: u.isAdmin,
+  marketingEmails: u.marketingEmails !== false,
   createdAt: u.createdAt,
 });
 
@@ -22,7 +23,7 @@ const getUsers = asyncHandler(async (_req, res) => {
 
 // PUT /api/users/profile  — updates basic fields (no password here)
 const updateProfile = asyncHandler(async (req, res) => {
-  const { name, email, address, phone, avatar } = req.body;
+  const { name, email, address, phone, avatar, marketingEmails } = req.body;
   const user = await User.findById(req.user._id);
   if (!user) {
     res.status(404);
@@ -32,6 +33,8 @@ const updateProfile = asyncHandler(async (req, res) => {
   if (email !== undefined) user.email = email;
   if (address !== undefined) user.address = address;
   if (phone !== undefined) user.phone = phone;
+  if (typeof marketingEmails === "boolean")
+    user.marketingEmails = marketingEmails;
   if (avatar !== undefined) {
     if (user.avatar?.publicId && user.avatar.publicId !== avatar?.publicId) {
       try {
