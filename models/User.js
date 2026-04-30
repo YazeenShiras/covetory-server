@@ -32,6 +32,15 @@ const userSchema = new mongoose.Schema(
       publicId: String,
     },
     wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
+    // Wishlist sharing — token is null when sharing is OFF.
+    // Sparse unique so multiple "off" users (null token) don't collide.
+    wishlistShareToken: {
+      type: String,
+      default: null,
+      index: { sparse: true, unique: true },
+    },
+    // Optional display name on the public wishlist page. If blank, no name shown.
+    wishlistShareName: { type: String, default: "", trim: true, maxlength: 40 },
     // Marketing email preferences
     marketingEmails: { type: Boolean, default: true },
     // password reset

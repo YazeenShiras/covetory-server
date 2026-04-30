@@ -1,5 +1,7 @@
 const asyncHandler = require("express-async-handler");
+const crypto = require("crypto");
 const User = require("../models/User");
+const Product = require("../models/Product");
 const { cloudinary } = require("../config/cloudinary");
 
 const publicUser = (u) => ({
@@ -12,6 +14,8 @@ const publicUser = (u) => ({
   wishlist: u.wishlist,
   isAdmin: u.isAdmin,
   marketingEmails: u.marketingEmails !== false,
+  wishlistShareToken: u.wishlistShareToken || null,
+  wishlistShareName: u.wishlistShareName || "",
   createdAt: u.createdAt,
 });
 
@@ -137,6 +141,81 @@ const toggleAdmin = asyncHandler(async (req, res) => {
   res.json(user);
 });
 
+// POST /api/users/wishlist/share — turn sharing ON or regenerate the token
+// body: { name?: string }   — optional first-name display
+const enableWishlistShare = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+  // 16 random bytes → 22-char base64url. Short enough for a URL, plenty unguessable.
+  const token = crypto.randomBytes(16).toString("base64url");
+  user.wishlistShareToken = token;
+  if (typeof req.body?.name === "string") {
+    user.wishlistShareName = req.body.name.slice(0, 40).trim();
+  }
+  await user.save();
+  res.json({
+    token,
+    name: user.wishlistShareName,
+  });
+});
+
+// DELETE /api/users/wishlist/share — turn sharing OFF (invalidates the link)
+const disableWishlistShare = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+  user.wishlistShareToken = null;
+  await user.save();
+  res.json({ ok: true });
+});
+
+// GET /api/wishlist/:token  — public lookup
+// Returns wishlist items (names, images, prices, IDs) and optional display name.
+// No identifying user info is exposed.
+const getSharedWishlist = asyncHandler(async (req, res) => {
+  const { token } = req.params;
+  if (!token || typeof token !== "string" || token.length < 8) {
+    res.status(404);
+    throw new Error("Wishlist not found");
+  }
+  const user = await User.findOne({ wishlistShareToken: token })
+    .select("wishlist wishlistShareName")
+    .populate({
+      path: "wishlist",
+      select:
+        "name price compareAtPrice images colors category stock variantStock",
+    });
+  if (!user) {
+    res.status(404);
+    throw new Error("Wishlist not found");
+  }
+
+  // Project to a public-safe shape
+  const items = (user.wishlist || []).map((p) => ({
+    _id: p._id,
+    name: p.name,
+    price: p.price,
+    compareAtPrice: p.compareAtPrice,
+    category: p.category,
+    image: p.colors?.[0]?.images?.[0]?.url || p.images?.[0]?.url || null,
+    inStock:
+      (p.stock || 0) > 0 ||
+      (p.variantStock &&
+        Object.values(p.variantStock).some((v) => Number(v) > 0)),
+  }));
+
+  res.json({
+    name: user.wishlistShareName || "",
+    items,
+    count: items.length,
+  });
+});
+
 module.exports = {
   getUsers,
   updateProfile,
@@ -146,4 +225,7 @@ module.exports = {
   toggleWishlist,
   deleteUser,
   toggleAdmin,
+  enableWishlistShare,
+  disableWishlistShare,
+  getSharedWishlist,
 };

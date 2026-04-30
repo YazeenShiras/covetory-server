@@ -8,6 +8,8 @@ const {
   toggleWishlist,
   deleteUser,
   toggleAdmin,
+  enableWishlistShare,
+  disableWishlistShare,
 } = require("../controllers/userController");
 const { protect, admin } = require("../middleware/auth");
 
@@ -16,6 +18,8 @@ router.put("/profile", protect, updateProfile);
 router.put("/password", protect, changePassword);
 router.delete("/me", protect, deleteMe);
 router.get("/wishlist", protect, getWishlist);
+router.post("/wishlist/share", protect, enableWishlistShare);
+router.delete("/wishlist/share", protect, disableWishlistShare);
 router.post("/wishlist/:productId", protect, toggleWishlist);
 
 // admin endpoints

@@ -43,6 +43,8 @@ const productSchema = new mongoose.Schema(
     },
 
     stock: { type: Number, required: true, default: 0, min: 0 },
+    // Per-product low-stock threshold. Falls back to LOW_STOCK_THRESHOLD env (default 5).
+    lowStockThreshold: { type: Number, default: null, min: 0 },
     rating: { type: Number, default: 0, min: 0, max: 5 },
     numReviews: { type: Number, default: 0 },
     featured: { type: Boolean, default: false },

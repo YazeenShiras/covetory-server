@@ -1,10 +1,11 @@
 const asyncHandler = require("express-async-handler");
 const Product = require("../models/Product");
 const { cloudinary } = require("../config/cloudinary");
+const { inventorySummary, analyseStock } = require("../utils/inventory");
 
-// GET /api/products  (supports ?q=&category=&featured=&page=&limit=)
+// GET /api/products  (supports ?q=&category=&featured=&page=&limit=&stock=low|out)
 const getProducts = asyncHandler(async (req, res) => {
-  const { q, category, featured } = req.query;
+  const { q, category, featured, stock } = req.query;
   const page = Number(req.query.page) || 1;
   const limit = Math.min(Number(req.query.limit) || 12, 60);
 
@@ -17,7 +18,6 @@ const getProducts = asyncHandler(async (req, res) => {
 
   if (q && q.trim()) {
     const term = q.trim();
-    // Try text search first (word-level, ranks by relevance)
     const textFilter = { ...filter, $text: { $search: term } };
     const textHits = await Product.countDocuments(textFilter);
 
@@ -25,7 +25,6 @@ const getProducts = asyncHandler(async (req, res) => {
       query = Product.find(textFilter, { score: { $meta: "textScore" } });
       sort = { score: { $meta: "textScore" } };
     } else {
-      // Fallback to partial regex match on name (catches prefix typing)
       const regex = {
         $regex: term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
         $options: "i",
@@ -39,11 +38,30 @@ const getProducts = asyncHandler(async (req, res) => {
     query = Product.find(filter);
   }
 
+  // Stock filter is applied post-fetch because variant analysis isn't expressible
+  // as a Mongo query without an aggregation pipeline. For shops up to ~10k SKUs
+  // this is fine; beyond that, switch to aggregation.
+  if (stock === "low" || stock === "out") {
+    const all = await query.sort(sort);
+    const filtered = all.filter((p) => analyseStock(p).status === stock);
+    const total = filtered.length;
+    const sliced = filtered.slice((page - 1) * limit, page * limit);
+    const products = sliced.map((p) => ({
+      ...p.toObject(),
+      inventory: inventorySummary(p),
+    }));
+    return res.json({ products, page, pages: Math.ceil(total / limit), total });
+  }
+
   const total = await Product.countDocuments(query.getFilter());
-  const products = await query
+  const docs = await query
     .sort(sort)
     .skip((page - 1) * limit)
     .limit(limit);
+  const products = docs.map((p) => ({
+    ...p.toObject(),
+    inventory: inventorySummary(p),
+  }));
 
   res.json({ products, page, pages: Math.ceil(total / limit), total });
 });
@@ -114,6 +132,8 @@ const updateProduct = asyncHandler(async (req, res) => {
     "stock",
     "featured",
     "variantStock",
+    "lowStockThreshold",
+    "hsn",
   ];
   for (const f of fields) {
     if (f in req.body) product[f] = req.body[f];

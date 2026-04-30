@@ -13,6 +13,7 @@ const uploadRoutes = require("./routes/upload");
 const paymentRoutes = require("./routes/payment");
 const couponRoutes = require("./routes/coupons");
 const cartRoutes = require("./routes/cart");
+const sharedWishlistRoutes = require("./routes/wishlist");
 const analyticsRoutes = require("./routes/analytics");
 const returnRoutes = require("./routes/returns");
 const { router: reviewRoutes, productReviews } = require("./routes/reviews");
@@ -44,6 +45,7 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/coupons", couponRoutes);
 app.use("/api/cart", cartRoutes);
+app.use("/api/wishlist", sharedWishlistRoutes);
 app.use("/api/returns", returnRoutes);
 app.use("/api", analyticsRoutes); // exposes /api/events + /api/analytics/*
 app.use("/api/reviews", reviewRoutes);
@@ -116,6 +118,60 @@ if (!RECOVERY_DISABLED && RECOVERY_INTERVAL_MS > 0) {
   }, RECOVERY_INTERVAL_MS);
   console.log(
     `[cart-recovery] scheduled every ${RECOVERY_INTERVAL_MS / 60000} minutes`
+  );
+}
+
+// ===== Inventory alerts =====
+const {
+  processInventoryAlerts,
+  ENABLED: INVENTORY_ENABLED,
+} = require("./utils/inventoryAlert");
+
+// HTTP trigger — supports shared token OR admin auth
+app.post("/api/admin/inventory-alerts/run", async (req, res, next) => {
+  try {
+    const token = req.headers["x-inventory-token"];
+    const sharedToken = process.env.INVENTORY_ALERT_TOKEN;
+    const tokenOk = sharedToken && token === sharedToken;
+    const force = req.query.force === "true";
+    if (!tokenOk) {
+      return protect(req, res, () =>
+        admin(req, res, async () => {
+          const result = await processInventoryAlerts({ force });
+          res.json(result);
+        })
+      );
+    }
+    const result = await processInventoryAlerts({ force });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Daily scheduler — checks once per hour whether the configured run-time has
+// passed today. INVENTORY_ALERT_HOUR is the UTC hour to send (default 02 = 7:30 IST).
+if (INVENTORY_ENABLED) {
+  const SEND_HOUR_UTC = Number(process.env.INVENTORY_ALERT_HOUR ?? 2);
+  let lastRunDay = null; // date string we last sent on
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      const today = now.toISOString().slice(0, 10);
+      if (now.getUTCHours() === SEND_HOUR_UTC && lastRunDay !== today) {
+        lastRunDay = today;
+        const result = await processInventoryAlerts();
+        console.log("[inventory]", result);
+      }
+    } catch (err) {
+      console.error("[inventory] tick failed:", err?.message);
+    }
+  }, 60 * 60 * 1000); // check every hour
+  console.log(
+    `[inventory] daily digest scheduled at ${String(SEND_HOUR_UTC).padStart(
+      2,
+      "0"
+    )}:00 UTC`
   );
 }
 

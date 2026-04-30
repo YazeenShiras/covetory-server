@@ -25,10 +25,12 @@ const wrap = (inner) => `
             colors.line
           };">
             <tr>
-              <td style="padding:32px 32px 16px;border-bottom:1px solid ${
+              <td style="padding:28px 32px 18px;border-bottom:1px solid ${
                 colors.line
               };">
-                <div style="font-size:28px;letter-spacing:-0.02em;">${BRAND}</div>
+                <a href="${SITE}" style="text-decoration:none;display:inline-block;">
+                  <img src="${SITE}/wordmark.png" alt="${BRAND}" height="28" style="display:block;border:0;height:28px;width:auto;" />
+                </a>
               </td>
             </tr>
             <tr>
@@ -360,10 +362,113 @@ function cartRecovery({ name, cart, user }) {
   };
 }
 
+function inventoryDigest({ name, lowItems = [], outItems = [] }) {
+  const adminUrl = `${SITE}/admin/products?stock=low`;
+
+  const renderItem = (it, kind) => `
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid ${
+        colors.line
+      };vertical-align:top;width:64px;">
+        ${
+          it.image
+            ? `<img src="${it.image}" alt="" width="56" style="display:block;border:1px solid ${colors.line};" />`
+            : ""
+        }
+      </td>
+      <td style="padding:14px 12px;border-bottom:1px solid ${
+        colors.line
+      };vertical-align:top;">
+        <div style="color:${colors.ink};">${it.name}</div>
+        ${
+          it.lowVariants?.length || it.outVariants?.length
+            ? `
+          <div style="color:${colors.muted};font-size:12px;margin-top:4px;">
+            ${
+              it.outVariants?.length
+                ? `<span style="color:#d24545;">${
+                    it.outVariants.length
+                  } variant${
+                    it.outVariants.length > 1 ? "s" : ""
+                  } sold out</span>`
+                : ""
+            }
+            ${it.outVariants?.length && it.lowVariants?.length ? " · " : ""}
+            ${
+              it.lowVariants?.length
+                ? `${it.lowVariants.length} variant${
+                    it.lowVariants.length > 1 ? "s" : ""
+                  } low`
+                : ""
+            }
+          </div>
+        `
+            : ""
+        }
+      </td>
+      <td align="right" style="padding:14px 0;border-bottom:1px solid ${
+        colors.line
+      };vertical-align:top;font-size:13px;">
+        <div style="color:${kind === "out" ? "#d24545" : colors.muted};">
+          ${kind === "out" ? "Out of stock" : `${it.totalStock} left`}
+        </div>
+        <div style="color:${colors.muted};font-size:11px;margin-top:2px;">
+          Threshold: ${it.threshold}
+        </div>
+      </td>
+    </tr>
+  `;
+
+  let body = "";
+  if (outItems.length > 0) {
+    body += `
+      <h2 style="font-family:Georgia,serif;font-weight:normal;font-size:18px;margin:32px 0 8px;color:#d24545;">
+        Out of stock — ${outItems.length}
+      </h2>
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;">${outItems
+        .map((i) => renderItem(i, "out"))
+        .join("")}</table>`;
+  }
+  if (lowItems.length > 0) {
+    body += `
+      <h2 style="font-family:Georgia,serif;font-weight:normal;font-size:18px;margin:32px 0 8px;">
+        Running low — ${lowItems.length}
+      </h2>
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;">${lowItems
+        .map((i) => renderItem(i, "low"))
+        .join("")}</table>`;
+  }
+
+  const html = wrap(`
+    <h1 style="font-family:Georgia,serif;font-weight:normal;font-size:26px;margin:0 0 12px;">
+      Inventory check, ${name?.split(" ")[0] || "team"}.
+    </h1>
+    <p style="color:${colors.muted};margin-top:0;">
+      Daily snapshot of items needing attention.
+    </p>
+    ${body}
+    <p style="margin-top:32px;">${btn(adminUrl, "Open inventory")}</p>
+    <p style="color:${colors.muted};font-size:11px;margin-top:24px;">
+      This digest only sends on days when something needs your attention. Threshold is editable per product on the admin product page.
+    </p>`);
+
+  const summary =
+    (outItems.length ? `${outItems.length} out of stock` : "") +
+    (outItems.length && lowItems.length ? ", " : "") +
+    (lowItems.length ? `${lowItems.length} running low` : "");
+
+  return {
+    subject: `Inventory: ${summary}`,
+    html,
+    text: `Inventory check — ${summary}. Open the admin: ${adminUrl}`,
+  };
+}
+
 module.exports = {
   passwordReset,
   orderConfirmation,
   orderStatusUpdate,
   welcome,
   cartRecovery,
+  inventoryDigest,
 };
