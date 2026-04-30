@@ -36,8 +36,7 @@ const userSchema = new mongoose.Schema(
     // Sparse unique so multiple "off" users (null token) don't collide.
     wishlistShareToken: {
       type: String,
-      default: null,
-      index: { sparse: true, unique: true },
+      index: { unique: true, sparse: true },
     },
     // Optional display name on the public wishlist page. If blank, no name shown.
     wishlistShareName: { type: String, default: "", trim: true, maxlength: 40 },
